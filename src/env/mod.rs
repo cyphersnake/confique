@@ -4,9 +4,7 @@ use std::fmt;
 
 use serde::de::IntoDeserializer;
 
-
 pub mod parse;
-
 
 /// Error type only for deserialization of env values.
 ///
@@ -39,7 +37,6 @@ impl serde::de::Error for DeError {
         Self(msg.to_string())
     }
 }
-
 
 /// Deserializer type. Semantically private (see `DeError`).
 #[doc(hidden)]
@@ -133,6 +130,130 @@ impl<'de> serde::Deserializer<'de> for Deserializer {
     }
 }
 
+mod formatter {
+    use std::{
+        collections::VecDeque,
+        fmt::{self, Write},
+    };
+
+    use crate::{meta::Expr, template::Formatter, Config, FormatOptions};
+
+    #[derive(Default)]
+    struct EnvFormatter {
+        buffer: String,
+        stack: VecDeque<&'static str>,
+    }
+
+    /// Helper to emit `meta::Expr` into JSON5.
+    struct PrintExpr(&'static Expr);
+    impl From<&'static Expr> for PrintExpr {
+        fn from(expr: &'static Expr) -> Self {
+            Self(expr)
+        }
+    }
+    impl fmt::Display for PrintExpr {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Expr::Str(str_) => write!(f, "{}", str_),
+                Expr::Float(float_) => write!(f, "{}", float_),
+                Expr::Integer(integer_) => write!(f, "{}", integer_),
+                Expr::Bool(true) => write!(f, "1"),
+                Expr::Bool(false) => write!(f, "0"),
+                Expr::Array(_array) => write!(f, "Not Supported"),
+                Expr::Map(_map) => write!(f, "Not Supported"),
+            }
+        }
+    }
+
+    impl Formatter for EnvFormatter {
+        type ExprPrinter = PrintExpr;
+
+        fn buffer(&mut self) -> &mut String {
+            &mut self.buffer
+        }
+
+        fn finish(self) -> String {
+            self.buffer
+        }
+
+        fn comment(&mut self, comment: impl fmt::Display) {
+            writeln!(self.buffer, "#{comment}").unwrap()
+        }
+
+        fn env_comment(&mut self, env_key: &'static str) {
+            writeln!(self.buffer, "{env_key}=").unwrap()
+        }
+
+        fn disabled_field(
+            &mut self,
+            name: &'static str,
+            value: Option<&'static crate::meta::Expr>,
+        ) {
+            match value.map(PrintExpr) {
+                Some(v) => self.comment(format_args!(
+                    "Sets the '{name}' field in the configuration (default value is {v})"
+                )),
+                None => self.comment(format_args!("Sets the '{name}' field in the configuration")),
+            };
+        }
+
+        fn start_nested(&mut self, name: &'static str, doc: &[&'static str]) {
+            self.stack.push_back(name);
+            self.comment(format!("Start '{name}'"));
+            doc.iter().for_each(|doc_line| self.comment(doc_line));
+        }
+
+        fn end_nested(&mut self) {
+            let name = self
+                .stack
+                .pop_back()
+                .expect("Unreachable, `end_nested` called only after `start_nested`");
+            self.comment(format!("End '{name}'"));
+        }
+    }
+
+    pub fn template<C: Config>(options: FormatOptions) -> String {
+        let mut out = EnvFormatter::default();
+        crate::template::format::<C>(&mut out, options);
+        out.finish()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate as confique;
+        use crate::Config;
+
+        use super::*;
+
+        #[test]
+        fn test_simple_format() {
+            #[allow(dead_code)]
+            #[derive(Debug, Config)]
+            struct Conf {
+                /// This is url
+                #[config(env = "URL", default = "0.0.0.0")]
+                url: String,
+                /// This is ports
+                /// Separate by ','
+                #[config(env = "PORTS", parse_env = crate::env::parse::list_by_comma)]
+                ports: Vec<u16>,
+                /// This is names
+                /// Separate by '|'
+                #[config(env = "NAMES", parse_env = crate::env::parse::list_by_sep::<'|', _, _>)]
+                names: Vec<String>,
+                /// This is optional surnames
+                /// Separate by ';'
+                #[config(env = "SURNAMES", parse_env = crate::env::parse::list_by_sep::<';', _, _>)]
+                surnames: Option<Vec<String>>,
+            }
+
+            let template = super::template::<Conf>(FormatOptions::default());
+            panic!("{}", template);
+        }
+    }
+}
+
+pub use formatter::template;
 
 #[cfg(test)]
 mod tests;

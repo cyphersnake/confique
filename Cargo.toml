@@ -1,6 +1,6 @@
 [package]
 name = "confique"
-version = "0.2.2"
+version = "0.2.3-alpha.1"
 authors = ["Lukas Kalbertodt <lukas.kalbertodt@gmail.com>"]
 edition = "2021"
 
