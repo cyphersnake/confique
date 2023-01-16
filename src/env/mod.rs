@@ -198,7 +198,7 @@ mod formatter {
         ) {
             let env_key = match self.current_env_field.take() {
                 Some(env_key) => {
-                    self.buffer.truncate(self.buffer.len() - 2); // Remove empty comment-line
+                    self.buffer.truncate(self.buffer.len().saturating_sub(2)); // Remove empty comment-line
                     env_key
                 }
                 None => {
